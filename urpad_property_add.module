@@ -1,0 +1,1045 @@
+<?php
+
+
+/**
+* Implementation of hook_menu
+*/
+function urpad_property_add_menu() {
+  $items = array();
+  $items['property-sale-success/%'] = array(
+    'title' => 'Thanks for adding a property for sale',
+    'description' => 'Confirmation page for sale properties',
+    'page callback' => 'property_success_page_sale',
+    'page arguments' => array(1),
+    'access callback' => TRUE,
+  );
+  $items['property-let-success/%'] = array(
+    'title' => 'Thanks for adding a property to let',
+    'description' => 'Confirmation page to let properties',
+    'page callback' => 'property_success_page_let',
+    'page arguments' => array(1),
+    'access callback' => TRUE,
+   );
+  $items['payment-confirmation'] = array(
+    'title' => 'Your payment information',
+    'description' => 'Confirmation page for payment',
+    'page callback' => 'payment_confirmation_page',
+    'access callback' => TRUE,
+  );
+  return $items;
+}
+
+/*
+ * Implementation of hook_form_alter()
+ */ 
+// Point all 4 types of property add form to the same submit function
+function urpad_property_add_form_alter(&$form, &$form_state, $form_id) 
+{    
+    if($form_id == 'property_for_sale_commercial_node_form' || 
+        $form_id == 'property_for_sale_private_node_form' || 
+        $form_id == 'property_to_let_commercial_node_form' || 
+        $form_id == 'property_to_let_private_node_form')
+    {
+        $form['actions']['submit']['#submit'][] = 'property_add_submit_callback';
+        $form['#submit'][]='property_add_submit_callback';
+    }
+    
+}
+
+function property_add_submit_callback($form, $form_state)
+{
+    // Now done with rules, this can be ignored
+} 
+
+
+// Display details of transaction to customer after returning from PayPal.
+function payment_confirmation_page()
+{
+    $return = '<h2>Details of your transaction are below:</h2>';
+    
+    if(!empty($_GET['tx'])) 
+    {
+        $return .= paypal_pdt($_GET['tx']);
+    }
+    else 
+    {
+        drupal_set_message('PayPal parameter error, please <a href="/contact-us">contact us</a> quoting your PayPal email address and the address of the property you added.', 'error');
+        return '';
+    }
+    return $return;
+}
+
+// Display payment information to the cutomer
+// User has successfully created a property but HAS NOT PAID at this point
+function property_success_page_sale($uid)
+{
+    $return = '';
+
+    if((int) $uid == 0) return '<p>This page needs a valid user ID to continue.</p>';
+   
+    $user = user_load($uid);
+
+    if(!empty($user))
+    {
+        $countnodes = count_user_properties($uid);
+
+        if($countnodes == 1) 
+        {
+            $message = 'Welcome to Urpad, ' . $user->name . '. We\'ve automatically set you up an account. Details of your user account have been emailed to you should you need to login in the future.';
+
+            if(user_is_logged_in()) 
+            {
+                global $user;
+                $message .= 'You\'ve been automatically logged in - you might like to <a href="/user/' . $user->uid . '/edit">change your password to one of your choice.</a>';
+            }
+            drupal_set_message($message);
+        } 
+        elseif($countnodes > 1) 
+        {
+            $message = 'Welcome back to Urpad, ' . $user->name . '. We\'ve automatically linked your recently added property to your existing account based on the email address you used.';
+            if(user_is_logged_in()) $message .= '<a href="/user/login" target="_blank">Login to see your account information</a>.';
+            drupal_set_message($message);
+        }
+        elseif($countnodes < 1) {
+            drupal_set_message('We could not find any properties associated with this user account. Please <a href="/contact-us">contact</a> support.');
+        }
+
+        
+        // Retrieve last added property for this user - should be unpublished
+        $unode = get_most_recent_property($user->uid);
+        
+        //echo '<pre>' . print_r($unode,1) . '</pre>';
+        
+        if(sizeof($unode) > 0)
+        {                        
+            // If property is unpublished, print PayPal button
+            if($unode->status == 0)
+            {
+                $return .=  '<p>Thank you for uploading your property at urpadonline.com</p>' . 
+                            '<p>Your property details will now be reviewed by the Administrator and after payment is received ' . 
+                            'will be dispatched to all major property portals within 72 hours. Please ensure that you have a ' . 
+                            'valid Energy Performance Certificate and a Gas & Electrical Safety Certificate for the property ' . 
+                            'within the next 30 days.</p> <p>Should you need to find a local energy assessor and/or a Gas Safe engineer ' . 
+                            'to facilitate this, then please search our <a href="/trade-directory" target="_blank">trade directory</a>.</p>' . 
+                            '<h3>The property details you have uploaded to Urpad Online are as follows:</h3>';
+                
+                $loc = $unode->field_property_location['und'][0];
+                $return .= '<p><strong>Property Location:</strong></p>';  
+                $return .= '<p>' . $loc['street'] . '<br />' . $loc['city'] . '<br />' . $loc['postal_code'] . '</p>';  
+                
+                $return .= '<p><strong>Payment</strong></p>';
+                $return .=  '<p>You added: ' . node_type_get_name($unode) . ' which is currently priced at: &pound;' . 
+                            variable_get($unode->type . '_price_val', 'N/A') . '. </p>' . 
+                            '<p><i>Please click the PayPal button below to make payment.</i></p>';
+                
+                // Display PayPal button if node is unpublished
+                //$return .= create_paypal_button($pnode, false);
+                
+                // LIVE BUTTON
+                
+                $return .= '<form action="https://www.paypal.com/cgi-bin/webscr" method="post" target="_top" class="paypal-form-property nid-' . $unode->nid . '">' . 
+                            '<input type="hidden" name="cmd" value="_s-xclick">' .
+                            '<input type="hidden" name="hosted_button_id" value="7CKW2BBTC6LSN">' . 
+                            '<input type="hidden" name="custom" value="' . $user->uid . '">' . 
+                            '<input type="image" src="https://www.paypalobjects.com/en_US/GB/i/btn/btn_buynowCC_LG.gif" border="0" name="submit" alt="PayPal – The safer, easier way to pay online." class="paypal-btn-property nid-' . $unode->nid . '">' . 
+                            '<img alt="" border="0" src="https://www.paypalobjects.com/en_GB/i/scr/pixel.gif" width="1" height="1">' . 
+                            '</form>';
+
+
+                watchdog('urpad_property_add', 'Displayed the PayPal button to the user ref: ' . $unode->title);
+
+                /*
+                // TEST BUTTON
+                $return .= '<form action="https://www.sandbox.paypal.com/cgi-bin/webscr" method="post" target="_top" class="paypal-form-property nid-' . $unode->nid . '">' . 
+                            '<input type="hidden" name="cmd" value="_s-xclick">' . 
+                            '<input type="hidden" name="hosted_button_id" value="YJ3P4EGQ9K7QY">' . 
+                            '<input type="hidden" name="custom" value="' . $user->uid . '">' . 
+                            '<input type="image" src="https://www.sandbox.paypal.com/en_US/GB/i/btn/btn_buynowCC_LG.gif" border="0" name="submit" alt="PayPal – The safer, easier way to pay online." class="paypal-btn-property nid-' . $unode->nid . '">' . 
+                            '<img alt="" border="0" src="https://www.sandbox.paypal.com/en_GB/i/scr/pixel.gif" width="1" height="1">' . 
+                            '</form>';
+                */
+
+            }
+            else
+            { 
+                $return .= '<p>Your most recent property has already been published on the site. You can view it at: ' . l($unode->title, 'node/' . $unode->nid) . '</p>';
+            }
+        }
+        else 
+        {
+            $return .= '<p>Could not load any properties for this user.</p>';
+            watchdog('urpad_property_add', 'Could not load any properties to enable display of the PayPal button for UID: ' . $uid, array(), WATCHDOG_ERROR);
+        }
+    }
+    else 
+    {
+        $return = '<p>Cannot load user object with given argument.</p>';
+        watchdog('urpad_property_add', 'Could not load a user with the UID: ' . $uid, array(), WATCHDOG_ERROR);
+    }
+    //else $return .= '<p>Currently no logged-in user, unable to retrieve any property information.</p>';
+    
+    return $return;
+}
+
+
+// User has successfully created a property but has not paid at this point
+function property_success_page_let($uid)
+{
+    $return = '';
+
+    if((int) $uid == 0) return '<p>This page needs a valid user ID to continue.</p>';
+   
+    $user = user_load($uid);
+
+    if(!empty($user))
+    {
+        $countnodes = count_user_properties($uid);
+        
+        if($countnodes == 1) {
+
+            $message = 'Welcome to Urpad, ' . $user->name . '. We\'ve automatically set you up an account. Details of your user account have been emailed to you should you need to login in the future.';
+
+            if(user_is_logged_in()) 
+            {
+                global $user;
+                $message .= ' You might like to <a href="/user/' . $user->uid . '/edit">change your password to one of your choice</a>.';
+            }
+
+            drupal_set_message($message);
+        } 
+        elseif($countnodes > 1) 
+        {
+            $message = 'Welcome back to Urpad, ' . $user->name . '. We\'ve automatically linked your recently added property to your existing account based on the email address you used.';
+            if(!user_is_logged_in()) $message .= ' <a href="/user/login" target="_blank">Login to see your account information</a>.';
+            drupal_set_message($message);
+        }
+        elseif($countnodes < 1) {
+            drupal_set_message('We could not find any properties associated with this user account. Please <a href="/contact-us">contact</a> support.');
+        }
+
+        // Retrieve last added property for this user - should be unpublished
+        $unode = get_most_recent_property($user->uid);
+        
+        //echo '<pre>' . print_r($unode,1) . '</pre>';
+        
+        if(sizeof($unode) > 0)
+        {
+            //$pnode = reset($unode);     
+            
+            //echo 'PNODE:<br><pre>' . print_r($pnode,1) . '</pre>';
+                   
+            //$return .= '<h3>Your most recently added property:</h3>';
+                        
+            // If property is unpublished, print PayPal button
+            if($unode->status == 0)
+            {
+                $return .=  '<p>Thank you for uploading your property at urpadonline.com</p>' . 
+                            '<p>Your property details will now be reviewed by the Administrator and after payment is received ' . 
+                            'via PayPal it will be dispatched to all major property portals within 24 hours. Please ensure that you have a ' . 
+                            'valid Energy Performance Certificate and a Gas & Electrical Safety Certificate for the property ' . 
+                            'within the next 30 days.</p> <p>Should you need to find a local energy assessor and/or a Gas Safe engineer ' . 
+                            'to facilitate this, then please search our trade database.</p>' . 
+                            '<h3>The property details you have uploaded to Urpad Online are as follows:</h3>';
+                
+                $loc = $unode->field_property_location['und'][0];
+                $return .= '<p><strong>Property Location:</strong></p>';  
+                $return .= '<p>' . $loc['street'] . '<br />' . $loc['city'] . '<br />' . $loc['postal_code'] . '</p>';  
+                
+                $return .= '<p><strong>Payment</strong></p>';
+                $return .=  '<p>You added: ' . node_type_get_name($unode) . ' which is currently priced at: &pound;' . 
+                            variable_get($unode->type . '_price_val', 'N/A') . '. </p>' . 
+                            '<p><i>Please click the PayPal button below to make payment.</i></p>';
+                
+                // Display PayPal button if node is unpublished
+                //$return .= create_paypal_button($unode, false);
+                
+                // LIVE BUTTON
+                
+                $return .= '<form action="https://www.paypal.com/cgi-bin/webscr" method="post" target="_top" class="paypal-form-property nid-' . $unode->nid . '">' . 
+                            '<input type="hidden" name="cmd" value="_s-xclick">' . 
+                            '<input type="hidden" name="hosted_button_id" value="7JX4BGGSKP44J">' . 
+                            '<input type="hidden" name="custom" value="' . $user->uid . '">' . 
+                            '<input type="image" src="https://www.paypalobjects.com/en_US/GB/i/btn/btn_buynowCC_LG.gif" border="0" name="submit" alt="PayPal – The safer, easier way to pay online." class="paypal-btn-property">' . 
+                            '<img alt="" border="0" src="https://www.paypalobjects.com/en_GB/i/scr/pixel.gif" width="1" height="1">' . 
+                            '</form>';
+
+
+                
+                watchdog('urpad_property_add', 'Displayed the PayPal button to the user ref: ' . $unode->title);
+                
+                /*
+                // TEST BUTTON
+                $return .= '<form action="https://www.sandbox.paypal.com/cgi-bin/webscr" method="post" target="_top" class="paypal-form-property nid-' . $unode->nid . '">' . 
+                            '<input type="hidden" name="cmd" value="_s-xclick">' . 
+                            '<input type="hidden" name="hosted_button_id" value="E3GR3UUVA5GMJ">' . 
+                            '<input type="hidden" name="custom" value="' . $user->uid . '">' . 
+                            '<input type="image" src="https://www.sandbox.paypal.com/en_US/GB/i/btn/btn_buynowCC_LG.gif" border="0" name="submit" alt="PayPal – The safer, easier way to pay online." class="paypal-btn-property nid-' . $unode->nid . '">' . 
+                            '<img alt="" border="0" src="https://www.sandbox.paypal.com/en_GB/i/scr/pixel.gif" width="1" height="1">' . 
+                            '</form>';
+                */
+            }
+            else $return .= '<p>Your most recent property has already been published on the site. You can view it at: ' . l($unode->title, 'node/' . $unode->nid) . '</p>';
+        }
+        else 
+        {
+            $return .= '<p>Could not load any properties.</p>';
+            watchdog('urpad_property_add', 'Could not load any properties to enable the display of the PayPal button for UID: ' . $uid, array(), WATCHDOG_ERROR);
+        }
+
+        if(!user_is_logged_in())
+        {
+            //$return .= '<p>The email you used matched an existing user in our database - please log in to continue. Please reset your password if you cannot remember it</p>';
+            //$return .= drupal_get_form('user_login_block');
+            //$return .= '<p>Currently no logged-in user, unable to retrieve any property information.</p>';
+        }
+    }
+    else 
+    {
+        $return = '<p>Cannot load user object with given argument.</p>';
+        watchdog('urpad_property_add', 'Could not load a user with the UID: ' . $uid, array(), WATCHDOG_ERROR);
+    }
+
+    return $return;
+}
+
+// CURL to PayPal to get information on customer transaction
+// If successful, use this info to construct notification email to 
+// Urpad admins containing property info & links to photos
+function paypal_pdt($tx)
+{
+        global $user;
+        $return = '';
+        $pp_hostname = "www.paypal.com"; // Change to www.sandbox.paypal.com to test against sandbox
+        //$pp_hostname = "www.sandbox.paypal.com";
+
+        // read the post from PayPal system and add 'cmd'
+        $req = 'cmd=_notify-synch';
+         
+        $tx_token = $tx;
+        // TEST Token
+        //$auth_token = "i6bE_sojRBi1PBSK-5O_oYkZgUqpdyCv4Yus0KvmFo6IiQOyJ_edyl6QCbC";
+        // Live token
+        $auth_token = 'QtntBnt6fZtWtteQJ9XAO0BCKd7yBItj0mlirKlx60-ph9VqpgIdMZjRLQO';
+        $req .= "&tx=$tx_token&at=$auth_token";
+         
+        $ch = curl_init();
+        curl_setopt($ch, CURLOPT_URL, "https://$pp_hostname/cgi-bin/webscr");
+        curl_setopt($ch, CURLOPT_POST, 1);
+        curl_setopt($ch, CURLOPT_RETURNTRANSFER,1);
+        curl_setopt($ch, CURLOPT_POSTFIELDS, $req);
+        curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, 1);
+        //set cacert.pem verisign certificate path in curl using 'CURLOPT_CAINFO' field here,
+        //if your server does not bundled with default verisign certificates.
+        curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, 2);
+        curl_setopt($ch, CURLOPT_HTTPHEADER, array("Host: $pp_hostname"));
+        $res = curl_exec($ch);
+        curl_close($ch);
+        
+        if(!$res) {
+            //HTTP ERROR
+            echo '<h1>HTTP ERROR.. </h1>';
+            watchdog('urpad_property_add', 'HTTP Error in PayPal CURL functions, no response received', array(), WATCHDOG_ERROR);
+        } else {
+             // parse the data
+            $lines = explode("\n", $res);
+
+            watchdog('urpad_property_add', 'Response received from PayPal: ' . $res);
+                        
+            $keyarray = array();
+            if (strcmp ($lines[0], "SUCCESS") == 0) {
+
+                for ($i=1; $i<count($lines);$i++) 
+                {
+                    if(isset($lines[$i]))
+                    {
+                        if(trim($lines[$i]) > '')
+                        {
+                            list($key,$val) = explode("=", $lines[$i]);
+                            $keyarray[urldecode($key)] = urldecode($val);
+                        }
+                        else $keyarray[urldecode($key)] = '';
+                    }
+                }   
+                
+                // UID is passed through PayPal from the Pay Now button using the 'custom' param (which is the only allowed param name), 
+                // the button is displayed to a customer after they have completed the property node add form. The functions for the
+                // display of these pages are also in this file.
+                if(!empty($keyarray['custom']))
+                {
+                    if((int)$keyarray['custom'] > 0)
+                    {
+                        $paramUID = (int) $keyarray['custom'];
+
+                        $pnode = get_most_recent_property($paramUID);
+                        
+                        $return .= '<p><strong>' . $keyarray['first_name'] . ' ' . $keyarray['last_name'] . '</strong>, thank you for your <b>successful</b> purchase of ' 
+                                    . $keyarray['item_name'] . ' (&pound;' . $keyarray['mc_gross'] . '). ' . 
+                                    'We\'ve been notified of this and will publish your property on the site ' . 
+                                    'and it will be dispatched to all major property portals within 24 hours.</p>' . 
+                                    '<p>You can view your properties using the <a href="/my-properties">My Properties page</a> (if you are logged in), where you can submit a request for edits to the property listing.</p>' . 
+                                    '<p>Preview your property here: ' . l($pnode->title, 'node/' . $pnode->nid) . '.</p>';                
+                        
+                        
+                        // If a SALE property, show customer links to other services they may like to purchase..
+                        if($pnode->type == 'property_for_sale_private' || $pnode->type == 'property_for_sale_commercial')
+                        {
+                            $also = node_load(137);
+                            $field = field_get_items('node', $also, 'body');
+                            $output = field_view_value('node', $also, 'body', $field[0]);
+                            $return .= '<div class="more-services">' . render($output) . '</div>';                    
+                        }
+                        
+                        // Send admin a notification with property details, including links to images
+                        $prop_imgs = array();
+                        $prop_info = '';
+
+                        if(!empty($pnode))
+                        {
+                            $thumbnail = l($pnode->field_main_photo['und'][0]['filename'], file_create_url($pnode->field_main_photo['und'][0]['uri'])); 
+
+                            foreach($pnode->field_photo_upload['und'] as $photoitem)
+                            {
+                                $prop_imgs[] = l($photoitem['filename'], file_create_url($photoitem['uri'])); 
+                            }
+
+                            if($pnode->status == 0) $prop_info = '<p>The unpublished property is accessible here: ' . l($pnode->title, 'node/' . $pnode->nid) . '</p>';
+                            else $prop_info = '<p>The latest property for this user is already published: ' . l($pnode->title, 'node/' . $pnode->nid) . '</p>';
+                        }
+                        else 
+                        {      
+                            watchdog('urpad_property_add', 'Unable to load recent property node for user ID: ' . $paramUID, array(), WATCHDOG_NOTICE, 'link');
+                            drupal_set_message('Unable to load a recent property node', 'error');
+                            return;
+                        }
+
+                        // Add fields from property node add form
+                        $lang = $pnode->language;
+                        $prop_info .= '<p><b>Customer Information</b></p>';
+                        $prop_info .= '<p>Customer name: ' . $pnode->field_to_let_priv_your_name[$lang][0]['safe_value'] . '<br>';
+                        $prop_info .= 'Are you: ' . $pnode->field_are_you_[$lang][0]['value'] . '<br>';
+                        $prop_info .= 'Email: ' . $pnode->field_email[$lang][0]['email'] . '<br>';
+                        $prop_info .= 'Company name: ' . $pnode->field_company_name[$lang][0]['safe_value'] . '<br>';
+                        $prop_info .= 'Daytime phone: ' . $pnode->field_daytime_phone[$lang][0]['safe_value'] . '<br>';
+                        $prop_info .= 'Evening phone: ' . $pnode->field_evening_phone[$lang][0]['safe_value'] . '<br>';
+                        $prop_info .= 'Mobile: ' . $pnode->field_mobile[$lang][0]['safe_value'] . '<br>';
+                        $prop_info .= 'Street address: ' . $pnode->field_street_address[$lang][0]['safe_value'] . '<br>';
+                        $prop_info .= 'Local area: ' . $pnode->field_local_area[$lang][0]['safe_value'] . '<br>';
+                        $prop_info .= 'Town / City: ' . $pnode->field_town_or_city[$lang][0]['safe_value'] . '<br>';
+                        $prop_info .= 'Postcode: ' . $pnode->field_postcode[$lang][0]['safe_value'] . '<br>';
+                        $prop_info .= 'County: ' . $pnode->field_county[$lang][0]['safe_value'] . '<br></p>';
+
+                        $prop_info .= '<p><strong>Property Specifics</strong></p>';
+                        $prop_info .= '<p>Property type: ' . $pnode->type . '</p>';
+                        $prop_info .= 'Property saved as: ' . $pnode->title . '<br>';
+                        $prop_info .= 'Property location:<br> ' . $pnode->field_property_location[$lang][0]['street'] . '<br>' . 
+                                                                $pnode->field_property_location[$lang][0]['area'] . '<br>' . 
+                                                                $pnode->field_property_location[$lang][0]['city'] . '<br>' . 
+                                                                $pnode->field_property_location[$lang][0]['postal_code'] . '<br>';
+
+
+                        if($pnode->type == 'property_for_sale_private') 
+                        {
+                            $prop_info .= 'Property type: ' . $pnode->field_property_type[$lang][0]['value'] . '<br>';
+                            $prop_info .= 'No. of bedrooms: ' . $pnode->field_number_of_bedrooms[$lang][0]['value'] . '<br>';
+                            $prop_info .= 'No. of reception rooms: ' . $pnode->field_number_of_reception_rooms[$lang][0]['value'] . '<br>';
+                            $prop_info .= 'Separate dining room: ' . ($pnode->field_separate_dining_room_[$lang][0]['value'] ? 'Yes' : 'No') . '<br>';
+                            $prop_info .= 'Cloakroom: ' . ($pnode->field_cloakroom_[$lang][0]['value'] ? 'Yes' : 'No') . '<br>';
+                            $prop_info .= 'Utility room: ' . ($pnode->field_utility_room_[$lang][0]['value'] ? 'Yes' : 'No') . '<br>';
+                            $prop_info .= 'Glazing: ' . $pnode->field_glazing[$lang][0]['value'] . '<br>';
+                             $prop_info .= 'No. of bathrooms: ' . $pnode->field_number_of_bathrooms[$lang][0]['value'] . '<br>';
+                             $prop_info .= 'No. of ensuites: ' . $pnode->field_number_of_ensuites[$lang][0]['value'] . '<br>';
+                             $prop_info .= 'Main bathroom features: <br>';
+                             foreach ($pnode->field_main_bathroom_features[$lang] as $bfeat) 
+                             {
+                                 $prop_info .= $bfeat['value'] . '<br>';
+                             }
+                             $prop_info .= 'other, if applicable: ' . (isset($pnode->field_other[$lang][0]['value']) ? $pnode->field_other[$lang][0]['value'] : '') . '<br>';
+                             $prop_info .= 'Type of heating: ' . $pnode->field_type_of_heating[$lang][0]['value'] . '<br>';
+                             $prop_info .= 'other, if applicable: ' . (isset($pnode->field_other_heatingtype[$lang][0]['value']) ? $pnode->field_other_heatingtype[$lang][0]['value'] : '') . '<br>';
+                             $prop_info .= 'Kitchen appliances include: <br>';
+                             foreach ($pnode->field_kitchen_appliances_include[$lang] as $kfeat) 
+                             {
+                                 $prop_info .= $kfeat['value'] . '<br>';
+                             }
+                             $prop_info .= 'other, if applicable: ' . (isset($pnode->field_other_kitchen_appliances[$lang][0]['value']) ? $pnode->field_other_kitchen_appliances[$lang][0]['value'] : '') . '<br>';
+                             $prop_info .= 'Garden: ' . $pnode->field_garden[$lang][0]['value'] . '<br>';
+                             $prop_info .= 'other, if applicable: ' . $pnode->field_other_garden[$lang][0]['value'] . '<br>';
+                             $prop_info .= 'Shed: ' . $pnode->field_shed[$lang][0]['value'] . '<br>';
+                             $prop_info .= 'Garage: ' . $pnode->field_garage[$lang][0]['value'] . '<br>';
+                             $prop_info .= 'Parking: ' . $pnode->field_parking[$lang][0]['value'] . '<br>';
+                             $prop_info .= 'Swimming pool: ' . $pnode->field_swimming_pool[$lang][0]['value'] . '<br>';
+                             $prop_info .= 'Intercom system: ' . ($pnode->field_intercom_system[$lang][0]['value'] ? 'Yes' : 'No') . '<br>';
+                             $prop_info .= 'Intruder alarm: ' . ($pnode->field_intruder_alarm[$lang][0]['value'] ? 'Yes' : 'No') . '<br>';
+                             $prop_info .= 'Property description: <br>';
+                             $prop_info .= $pnode->field_property_description[$lang][0]['safe_value'] . '<br>';
+                             $prop_info .= 'Energy performance certificate: ' . $pnode->field_energy_performance_certifi[$lang][0]['value'] . '<br>';
+                             $prop_info .= 'Safety certificate: ' . $pnode->field_safety_certificate[$lang][0]['value'] . '<br>';
+                             $prop_info .= 'NHBC Warranty remaining: ' . $pnode->field_nhbc_warranty_remaining[$lang][0]['value'] . '<br>';
+
+                             $prop_info .= 'Asking price: £' . $pnode->field_asking_price_numeric[$lang][0]['value'] . '<br>';
+                             $prop_info .= 'Annual service charge: ' . $pnode->field_annual_service_charge[$lang][0]['value'] . '<br>';
+                             $prop_info .= 'Help to buy: ' . $pnode->field_help_to_buy[$lang][0]['value'] . '<br>';
+                             $prop_info .= 'New home: ' . $pnode->field_new_home_[$lang][0]['value'] . '<br>';
+                        }
+                        elseif($pnode->type == 'property_to_let_private')
+                        {
+                             $prop_info .= 'Property type: ' . $pnode->field_property_type[$lang][0]['value'] . '<br>';
+                             $prop_info .= 'Date available: ' . format_date(strtotime($pnode->field_date_available[$lang][0]['value']),'custom','jS F Y') . '<br>';
+                             $prop_info .= 'Furnished: ' . $pnode->field_furnished_[$lang][0]['value'] . '<br>';
+
+                             $prop_info .= 'No. of bedrooms: ' . $pnode->field_number_of_bedrooms[$lang][0]['value'] . '<br>';
+                             $prop_info .= 'No. of reception rooms: ' . $pnode->field_number_of_reception_rooms[$lang][0]['value'] . '<br>';
+                             $prop_info .= 'Separate dining room: ' . ($pnode->field_separate_dining_room_[$lang][0]['value'] ? 'Yes' : 'No') . '<br>';
+                             $prop_info .= 'Cloakroom: ' . ($pnode->field_cloakroom_[$lang][0]['value'] ? 'Yes' : 'No') . '<br>';
+                             $prop_info .= 'Utility room: ' . ($pnode->field_utility_room_[$lang][0]['value'] ? 'Yes' : 'No') . '<br>';
+
+                             $prop_info .= 'Glazing: ' . $pnode->field_glazing[$lang][0]['value'] . '<br>';
+                             $prop_info .= 'No. of bathrooms: ' . $pnode->field_number_of_bathrooms[$lang][0]['value'] . '<br>';
+                             $prop_info .= 'No. of ensuites: ' . $pnode->field_number_of_ensuites[$lang][0]['value'] . '<br>';
+                             $prop_info .= 'Main bathroom features: <br>';
+                             foreach ($pnode->field_main_bathroom_features[$lang] as $bfeat) 
+                             {
+                                 $prop_info .= $bfeat['value'] . '<br>';
+                             }
+                             $prop_info .= 'other, if applicable: ' . (isset($pnode->field_other[$lang][0]['value']) ? $pnode->field_other[$lang][0]['value'] : '') . '<br>';
+                             $prop_info .= 'Type of heating: ' . $pnode->field_type_of_heating[$lang][0]['value'] . '<br>';
+                             $prop_info .= 'other, if applicable: ' . (isset($pnode->field_other_heatingtype[$lang][0]['value']) ? $pnode->field_other_heatingtype[$lang][0]['value'] : '') . '<br>';
+                             $prop_info .= 'Kitchen appliances include: <br>';
+                             foreach ($pnode->field_kitchen_appliances_include[$lang] as $kfeat) 
+                             {
+                                 $prop_info .= $kfeat['value'] . '<br>';
+                             }
+                             $prop_info .= 'other, if applicable: ' . (isset($pnode->field_other_kitchen_appliances[$lang][0]['value']) ? $pnode->field_other_kitchen_appliances[$lang][0]['value'] : '') . '<br>';
+                             $prop_info .= 'Garden: ' . $pnode->field_garden[$lang][0]['value'] . '<br>';
+                             $prop_info .= 'other, if applicable: ' . (isset($pnode->field_other_garden[$lang][0]['value']) ? $pnode->field_other_garden[$lang][0]['value'] : '') . '<br>';
+                             $prop_info .= 'Shed: ' . $pnode->field_shed[$lang][0]['value'] . '<br>';
+                             $prop_info .= 'Garage: ' . $pnode->field_garage[$lang][0]['value'] . '<br>';
+                             $prop_info .= 'Parking: ' . $pnode->field_parking[$lang][0]['value'] . '<br>';
+                             $prop_info .= 'Swimming pool: ' . $pnode->field_swimming_pool[$lang][0]['value'] . '<br>';
+                             $prop_info .= 'Intercom system: ' . ($pnode->field_intercom_system[$lang][0]['value'] ? 'Yes' : 'No') . '<br>';
+                             $prop_info .= 'Intruder alarm: ' . ($pnode->field_intruder_alarm[$lang][0]['value'] ? 'Yes' : 'No') . '<br>';
+                             $prop_info .= 'Property description: <br>';
+                             $prop_info .= $pnode->field_property_description[$lang][0]['safe_value'] . '<br>';
+                             $prop_info .= 'Energy performance certificate: ' . $pnode->field_energy_performance_certifi[$lang][0]['value'] . '<br>';
+                             $prop_info .= 'Safety certificate: ' . $pnode->field_safety_certificate[$lang][0]['value'] . '<br>';
+
+                             $prop_info .= 'Term: ' . $pnode->field_term[$lang][0]['value'] . '<br>';
+                             $prop_info .= 'Deposit required?: ' . $pnode->field_deposit_required_[$lang][0]['value'] . '<br>';
+                             $prop_info .= 'How much is the deposit: ' . $pnode->field_how_much_is_the_deposit_[$lang][0]['safe_value'] . '<br>';
+                             $prop_info .= 'Council tax per month: ' . $pnode->field_council_tax_per_month[$lang][0]['safe_value'] . '<br>';
+                             $prop_info .= 'Average monthly utility bills: ' . $pnode->field_average_monthly_utility_bi[$lang][0]['safe_value'] . '<br>';
+                             $prop_info .= 'Do you supply an inventory: ' . ($pnode->field_do_you_supply_an_inventory[$lang][0]['value'] ? 'Yes' : 'No') . '<br>';
+                             $prop_info .= 'Housing benefit accepted: ' . ($pnode->field_housing_benefit_accepted_[$lang][0]['value'] ? 'Yes' : 'No') . '<br>';
+                             $prop_info .= 'Is smoking allowed: ' . ($pnode->field_is_smoking_allowed_[$lang][0]['value'] ? 'Yes' : 'No') . '<br>';
+                             $prop_info .= 'Do you allow pets: ' . ($pnode->field_do_you_allow_pets_[$lang][0]['value'] ? 'Yes' : 'No') . '<br>';
+                        }
+                        elseif($pnode->type == 'property_to_let_commercial')
+                        {
+                             $prop_info .= 'Property type: ' . $pnode->field_property_type_commercial[$lang][0]['value'] . '<br>';
+                             $prop_info .= 'Property description: <br>';
+                             $prop_info .= $pnode->field_property_description[$lang][0]['safe_value'] . '<br>';
+                             $prop_info .= 'Date available: ' . format_date(strtotime($pnode->field_date_available[$lang][0]['value']),'custom','jS F Y') . '<br>';
+                             $prop_info .= 'Type of heating: ' . $pnode->field_type_of_heating[$lang][0]['value'] . '<br>';
+                             $prop_info .= 'other, if applicable: ' . (isset($pnode->field_other_heatingtype[$lang][0]['value']) ? $pnode->field_other_heatingtype[$lang][0]['value'] : '') . '<br>';
+                             $prop_info .= 'Registered usage class: ' . $pnode->field_registered_usage_class[$lang][0]['value'] . '<br>';
+                             $prop_info .= 'Machinery included: ' . ($pnode->field_registered_usage_class[$lang][0]['value'] ? 'Yes' : 'No') . '<br>';
+                             $prop_info .= 'What is the machinery set up to manufacture: ' . $pnode->field_what_is_the_machinery_set_[$lang][0]['safe_value'] . '<br>';
+                             $prop_info .= 'Connected utilities: <br>';
+                             foreach ($pnode->field_connected_utilities[$lang] as $cfeat) 
+                             {
+                                 $prop_info .= $cfeat['value'] . '<br>';
+                             }
+                             $prop_info .= 'Size (square feet): ' . $pnode->field_size_square_feet_[$lang][0]['safe_value'] . '<br>';
+                             $prop_info .= 'No. of rooms: ' . $pnode->field_number_of_rooms[$lang][0]['value'] . '<br>';
+                             $prop_info .= 'No. of WCs: ' . $pnode->field_number_of_wcs[$lang][0]['safe_value'] . '<br>';
+                             $prop_info .= 'Reception area: ' . $pnode->field_reception_area[$lang][0]['value'] . '<br>';
+                             $prop_info .= 'Furnished: ' . $pnode->field_furnished_[$lang][0]['value'] . '<br>';
+                             $prop_info .= 'Disabled access: ' . ($pnode->field_disabled_access_[$lang][0]['value'] ? 'Yes' : 'No') . '<br>';
+                             $prop_info .= 'Loading bay: ' . ($pnode->field_loading_bay_[$lang][0]['value'] ? 'Yes' : 'No') . '<br>';
+                             $prop_info .= 'Ground floor location: ' . ($pnode->field_ground_floor_location_[$lang][0]['value'] ? 'Yes' : 'No') . '<br>';
+                             $prop_info .= 'Air con: ' . ($pnode->field_air_conditioning_[$lang][0]['value'] ? 'Yes' : 'No') . '<br>';
+                             $prop_info .= 'CAT5 installed: ' . ($pnode->field_cat5_installed_[$lang][0]['value'] ? 'Yes' : 'No') . '<br>';
+                             $prop_info .= 'Is there a lift: ' . ($pnode->field_is_there_a_lift_[$lang][0]['value'] ? 'Yes' : 'No') . '<br>';
+                             $prop_info .= 'How many parking spaces: ' . $pnode->field_how_many_parking_spaces_[$lang][0]['safe_value'] . '<br>';
+                             $prop_info .= 'Glazing: ' . $pnode->field_glazing[$lang][0]['value'] . '<br>';
+                             $prop_info .= 'Kitchen appliances included: <br>';
+                             foreach ($pnode->field_kitchen_appliances_include[$lang] as $kfeat) 
+                             {
+                                 $prop_info .= $kfeat['value'] . '<br>';
+                             }
+                             $prop_info .= 'other, if applicable: ' . (isset($pnode->field_other_kitchen_appliances[$lang][0]['value']) ? $pnode->field_other_kitchen_appliances[$lang][0]['value'] : '') . '<br>';
+                             $prop_info .= 'Security: <br>';
+                             foreach ($pnode->field_security[$lang] as $secfeat) 
+                             {
+                                 $prop_info .= $secfeat['value'] . '<br>';
+                             }
+                             $prop_info .= 'Parking:<br>';
+                             $prop_info .= 'No. of parking spaces: ' . $pnode->field_number_of_parking_spaces[$lang][0]['safe_value'] . '<br>';
+                             $prop_info .= 'No. of levels: ' . $pnode->field_number_of_levels[$lang][0]['safe_value'] . '<br>';
+                             $prop_info .= 'Surface (gravel, tarmac etc): ' . $pnode->field_surface_gravel_tarmac_etc_[$lang][0]['safe_value'] . '<br>';
+                             $prop_info .= 'Lighting: ' . ($pnode->field_lighting_[$lang][0]['value'] ? 'Yes' : 'No') . '<br>';
+                             $prop_info .= 'Sheltered: ' . ($pnode->field_sheltered_[$lang][0]['value'] ? 'Yes' : 'No') . '<br>';
+                             $prop_info .= 'Is there a lift: ' . ($pnode->field_is_there_a_lift_parking[$lang][0]['value'] ? 'Yes' : 'No') . '<br>';
+
+                             $prop_info .= 'External<br>';
+                             $prop_info .= 'Frontage width (in feet): ' . $pnode->field_frontage_width_in_feet_[$lang][0]['safe_value'] . '<br>';
+                             $prop_info .= 'Display fixtures included: ' . $pnode->field_display_fixtures_included_[$lang][0]['value'] . '<br>';
+                             $prop_info .= 'No. of loading bays: ' . $pnode->field_number_of_loading_bays[$lang][0]['safe_value'] . '<br>';
+
+                             $prop_info .= 'Grounds<br>';
+                             $prop_info .= 'Size (acres): ' . (isset($pnode->field_size_acres_[$lang][0]['safe_value']) ? $pnode->field_size_acres_[$lang][0]['safe_value'] : '') . '<br>';
+                             $prop_info .= 'Free of buildings: ' . ($pnode->field_free_of_buildings_[$lang][0]['value'] ? 'Yes' : 'No') . '<br>';
+                             $prop_info .= 'Currently fenced: ' . ($pnode->field_currently_fenced_[$lang][0]['value'] ? 'Yes' : 'No') . '<br>';
+                             $prop_info .= 'Land zone location: ' . (isset($pnode->field_land_zone_location[$lang][0]['value']) ? $pnode->field_land_zone_location[$lang][0]['value'] : '') . '<br>';
+                             $prop_info .= 'Distance to main utility arteries: ' . (isset($pnode->field_distance_to_main_utility_a[$lang][0]['safe_value']) ? $pnode->field_distance_to_main_utility_a[$lang][0]['safe_value'] : '') . '<br>';
+                             $prop_info .= 'Distance to nearest road: ' . (isset($pnode->field_distance_to_nearest_road[$lang][0]['safe_value']) ? $pnode->field_distance_to_nearest_road[$lang][0]['safe_value'] : '') . '<br>';
+                             $prop_info .= 'Holding a natural water source: ' . ($pnode->field_holding_a_natural_water_so[$lang][0]['value'] ? 'Yes' : 'No') . '<br>';
+                             $prop_info .= 'Type of land: ' . (isset($pnode->field_type_of_land[$lang][0]['value']) ? $pnode->field_type_of_land[$lang][0]['value'] : '') . '<br>';
+
+                             $prop_info .= 'Certificates:<br>';
+                             $prop_info .= 'EPC Certificate number: ' . $pnode->field_epc_certificate_number[$lang][0]['safe_value'] . '<br>';
+                             $prop_info .= 'Assessor\'s accreditation number: ' . $pnode->field_assessor_s_accreditation_n[$lang][0]['safe_value'] . '<br>';
+                             $prop_info .= 'Gas Safe certificate serial number: ' . $pnode->field_gas_safe_certificate_seria[$lang][0]['safe_value'] . '<br>';
+                             $prop_info .= 'Gas Safe engineer\'s ID card number: ' . $pnode->field_gas_safe_engineer_s_id_car[$lang][0]['safe_value'] . '<br>';
+                             $prop_info .= 'What documents are available for potential tenants to view on request?: <br>';
+                             foreach ($pnode->field_what_documents_are_availab[$lang] as $docfeat) 
+                             {
+                                 $prop_info .= $docfeat['value'] . '<br>';
+                             }
+
+                             $prop_info .= 'Price / Term:<br>';
+                             $prop_info .= 'Tenure: ' . $pnode->field_tenure[$lang][0]['value'] . '<br>';
+                             $prop_info .= 'Term: ' . $pnode->field_term[$lang][0]['value'] . '<br>';
+                             $prop_info .= 'Deposit required?: ' . ($pnode->field_deposit_required_[$lang][0]['value'] ? 'Yes' : 'No') . '<br>';
+                             $prop_info .= 'How much is the deposit: ' . $pnode->field_how_much_is_the_deposit_[$lang][0]['safe_value'] . '<br>';
+                             $prop_info .= 'Monthly rent: £' . $pnode->field_monthly_rent_numeric[$lang][0]['value'] . '<br>';
+                             $prop_info .= 'Average monthly utility bills: ' . $pnode->field_average_monthly_utility_bi[$lang][0]['safe_value'] . '<br>';
+                             $prop_info .= 'Business rates per month: ' . $pnode->field_business_rates_per_month[$lang][0]['safe_value'] . '<br>';
+                             
+                        }
+                        elseif($pnode->type == 'property_for_sale_commercial')
+                        {
+                             $prop_info .= 'Property type: ' . $pnode->field_property_type_commercial[$lang][0]['value'] . '<br>';
+                             $prop_info .= 'Property description: <br>';
+                             $prop_info .= $pnode->field_property_description[$lang][0]['safe_value'] . '<br>';
+                             $prop_info .= 'Date available: ' . format_date(strtotime($pnode->field_date_available[$lang][0]['value']),'custom','jS F Y') . '<br>';
+                             $prop_info .= 'Type of heating: ' . $pnode->field_type_of_heating[$lang][0]['value'] . '<br>';
+                             $prop_info .= 'other, if applicable: ' . (isset($pnode->field_other_heatingtype[$lang][0]['value']) ? $pnode->field_other_heatingtype[$lang][0]['value'] : '') . '<br>';
+                             $prop_info .= 'Registered usage class: ' . $pnode->field_registered_usage_class[$lang][0]['value'] . '<br>';
+                             $prop_info .= 'Machinery included: ' . ($pnode->field_registered_usage_class[$lang][0]['value'] ? 'Yes' : 'No') . '<br>';
+                             $prop_info .= 'What is the machinery set up to manufacture: ' . $pnode->field_what_is_the_machinery_set_[$lang][0]['safe_value'] . '<br>';
+                             $prop_info .= 'Connected utilities: <br>';
+                             foreach ($pnode->field_connected_utilities[$lang] as $cfeat) 
+                             {
+                                 $prop_info .= $cfeat['value'] . '<br>';
+                             }
+                             $prop_info .= 'Size (square feet): ' . $pnode->field_size_square_feet_[$lang][0]['safe_value'] . '<br>';
+                             $prop_info .= 'No. of rooms: ' . $pnode->field_number_of_rooms[$lang][0]['value'] . '<br>';
+                             $prop_info .= 'No. of WCs: ' . $pnode->field_number_of_wcs[$lang][0]['safe_value'] . '<br>';
+                             $prop_info .= 'Reception area: ' . $pnode->field_reception_area[$lang][0]['value'] . '<br>';
+                             $prop_info .= 'Furnished: ' . $pnode->field_furnished_[$lang][0]['value'] . '<br>';
+                             $prop_info .= 'Disabled access: ' . ($pnode->field_disabled_access_[$lang][0]['value'] ? 'Yes' : 'No') . '<br>';
+                             $prop_info .= 'Loading bay: ' . ($pnode->field_loading_bay_[$lang][0]['value'] ? 'Yes' : 'No') . '<br>';
+                             $prop_info .= 'Ground floor location: ' . ($pnode->field_ground_floor_location_[$lang][0]['value'] ? 'Yes' : 'No') . '<br>';
+                             $prop_info .= 'Air con: ' . ($pnode->field_air_conditioning_[$lang][0]['value'] ? 'Yes' : 'No') . '<br>';
+                             $prop_info .= 'CAT5 installed: ' . ($pnode->field_cat5_installed_[$lang][0]['value'] ? 'Yes' : 'No') . '<br>';
+                             $prop_info .= 'Is there a lift: ' . ($pnode->field_is_there_a_lift_[$lang][0]['value'] ? 'Yes' : 'No') . '<br>';
+                             $prop_info .= 'How many parking spaces: ' . $pnode->field_how_many_parking_spaces_[$lang][0]['safe_value'] . '<br>';
+                             $prop_info .= 'Glazing: ' . $pnode->field_glazing[$lang][0]['value'] . '<br>';
+                             $prop_info .= 'Kitchen appliances included: <br>';
+                             foreach ($pnode->field_kitchen_appliances_include[$lang] as $kfeat) 
+                             {
+                                 $prop_info .= $kfeat['value'] . '<br>';
+                             }
+                             $prop_info .= 'other, if applicable: ' . (isset($pnode->field_other_kitchen_appliances[$lang][0]['value']) ? $pnode->field_other_kitchen_appliances[$lang][0]['value'] : '') . '<br>';
+                             $prop_info .= 'Security: <br>';
+                             foreach ($pnode->field_security[$lang] as $secfeat) 
+                             {
+                                 $prop_info .= $secfeat['value'] . '<br>';
+                             }
+                             $prop_info .= 'Parking:<br>';
+                             $prop_info .= 'No. of parking spaces: ' . $pnode->field_number_of_parking_spaces[$lang][0]['safe_value'] . '<br>';
+                             $prop_info .= 'No. of levels: ' . $pnode->field_number_of_levels[$lang][0]['safe_value'] . '<br>';
+                             $prop_info .= 'Surface (gravel, tarmac etc): ' . $pnode->field_surface_gravel_tarmac_etc_[$lang][0]['safe_value'] . '<br>';
+                             $prop_info .= 'Lighting: ' . ($pnode->field_lighting_[$lang][0]['value'] ? 'Yes' : 'No') . '<br>';
+                             $prop_info .= 'Sheltered: ' . ($pnode->field_sheltered_[$lang][0]['value'] ? 'Yes' : 'No') . '<br>';
+                             $prop_info .= 'Is there a lift: ' . ($pnode->field_is_there_a_lift_parking[$lang][0]['value'] ? 'Yes' : 'No') . '<br>';
+
+                             $prop_info .= 'External<br>';
+                             $prop_info .= 'Frontage width (in feet): ' . $pnode->field_frontage_width_in_feet_[$lang][0]['safe_value'] . '<br>';
+                             $prop_info .= 'Display fixtures included: ' . $pnode->field_display_fixtures_included_[$lang][0]['value'] . '<br>';
+                             $prop_info .= 'No. of loading bays: ' . $pnode->field_number_of_loading_bays[$lang][0]['safe_value'] . '<br>';
+                             
+                             $prop_info .= 'Grounds<br>';
+                             $prop_info .= 'Size (acres): ' . (isset($pnode->field_size_acres_[$lang][0]['safe_value']) ? $pnode->field_size_acres_[$lang][0]['safe_value'] : '') . '<br>';
+                             $prop_info .= 'Free of buildings: ' . ($pnode->field_free_of_buildings_[$lang][0]['value'] ? 'Yes' : 'No') . '<br>';
+                             $prop_info .= 'Currently fenced: ' . ($pnode->field_currently_fenced_[$lang][0]['value'] ? 'Yes' : 'No') . '<br>';
+                             $prop_info .= 'Land zone location: ' . (isset($pnode->field_land_zone_location[$lang][0]['value']) ? $pnode->field_land_zone_location[$lang][0]['value'] : '') . '<br>';
+                             $prop_info .= 'Distance to main utility arteries: ' . (isset($pnode->field_distance_to_main_utility_a[$lang][0]['safe_value']) ? $pnode->field_distance_to_main_utility_a[$lang][0]['safe_value'] : '') . '<br>';
+                             $prop_info .= 'Distance to nearest road: ' . (isset($pnode->field_distance_to_nearest_road[$lang][0]['safe_value']) ? $pnode->field_distance_to_nearest_road[$lang][0]['safe_value'] : '') . '<br>';
+                             $prop_info .= 'Holding a natural water source: ' . ($pnode->field_holding_a_natural_water_so[$lang][0]['value'] ? 'Yes' : 'No') . '<br>';
+                             $prop_info .= 'Type of land: ' . (isset($pnode->field_type_of_land[$lang][0]['value']) ? $pnode->field_type_of_land[$lang][0]['value'] : '') . '<br>';
+
+                             $prop_info .= 'Certificates:<br>';
+                             $prop_info .= 'EPC Certificate number: ' . $pnode->field_epc_certificate_number[$lang][0]['safe_value'] . '<br>';
+                             $prop_info .= 'Assessor\'s accreditation number: ' . $pnode->field_assessor_s_accreditation_n[$lang][0]['safe_value'] . '<br>';
+                             $prop_info .= 'Gas Safe certificate serial number: ' . $pnode->field_gas_safe_certificate_seria[$lang][0]['safe_value'] . '<br>';
+                             $prop_info .= 'Gas Safe engineer\'s ID card number: ' . $pnode->field_gas_safe_engineer_s_id_car[$lang][0]['safe_value'] . '<br>';
+                             $prop_info .= 'What documents are available for potential tenants to view on request?: <br>';
+                             foreach ($pnode->field_what_documents_are_availab[$lang] as $docfeat) 
+                             {
+                                 $prop_info .= $docfeat['value'] . '<br>';
+                             }
+
+                             $prop_info .= 'Price / Term:<br>';
+                             $prop_info .= 'Tenure: ' . $pnode->field_tenure[$lang][0]['value'] . '<br>';
+                             $prop_info .= 'Asking price: £' . $pnode->field_asking_price_numeric[$lang][0]['value'] . '<br>';
+                             $prop_info .= 'Average monthly utility bills: ' . $pnode->field_average_monthly_utility_bi[$lang][0]['safe_value'] . '<br>';
+                             $prop_info .= 'Business rates per month: ' . $pnode->field_business_rates_per_month[$lang][0]['safe_value'] . '<br>';                        
+                        }
+                        
+                        $prop_info .= 'How did you hear about us: ' . $pnode->field_how_did_you_hear_about_us_[$lang][0]['value'] . '<br>';
+
+
+
+                        // Notify Urpad of successful payment, link to property
+                        $mailbody = '<p>' . $keyarray['first_name'] . ' ' . $keyarray['last_name'] . ' has made a payment of £' . $keyarray['mc_gross'] . ' to your PayPal account.</p>';
+                        $mailbody .= '<p>Please publish the property on the site and dispatch the details to the major property portals.</p>';
+                        $mailbody .= $prop_info;
+                        $mailbody .= '<p>Property thumbnail: ' . $thumbnail . '</p>';
+                        $mailbody .= '<p>Property images:</p><p>';
+                        
+                        if(!empty($prop_imgs))
+                        {
+                            foreach($prop_imgs as $prop_img)
+                            {
+                                $mailbody .= $prop_img . '<br>';
+                            }
+                        } else $mailbody .= 'No images were uploaded.';
+                        $mailbody .= '</p>';
+                        
+                        $mailed = false;
+                        $adminemail = 'hello@urpadonline.com';
+
+                        watchdog('urpad_property_add', 'About to send email to admin..');
+                        $mailed = urpad_property_add_mail('hello@urpadonline.com', $adminemail, 'Urpad Online - Payment Received for ' . $pnode->title,  $mailbody);
+                        $mailed2 = urpad_property_add_mail('hello@urpadonline.com', 'matthewe@gwsmedia.com', 'Urpad Online - Payment Received for ' . $pnode->title,  $mailbody);
+                        //$mailed3 = urpad_property_add_mail('hello@urpadonline.com', 'tim@letinbristol.com ', 'Urpad Online - Payment Received for ' . $pnode->title,  $mailbody);
+
+                        if($mailed === TRUE) watchdog('urpad_property_add', 'PayPal payment received & CURL completed successfully, email sent to admin: ' . $adminemail . '. Email body was:<br>' . $mailbody);
+                        else watchdog('urpad_property_add', 'No email was sent to admin: <br>' . $mailbody, array(), WATCHDOG_ERROR);
+                        
+                        if(!$mailed) drupal_set_message('Notification email failed to send to Urpad Team, please <a href="/contact-us">contact us</a> quoting this error.', 'error');
+                    }
+                    else 
+                    {
+                        watchdog('urpad_property_add', '<b>User ID was not valid for this callback</b><br>' . print_r($lines,1) . '</pre>', array(), WATCHDOG_ERROR);
+                        drupal_set_message(t('User ID was not valid for this callback, please <a href="/contact-us">contact us</a> quoting this message.'), 'error');
+                    }
+                }
+                else 
+                {
+                    watchdog('urpad_property_add', '<b>Unable to ascertain a valid user ID for this callback</b><br>' . print_r($lines,1) . '</pre>', array(), WATCHDOG_ERROR);
+                    drupal_set_message(t('Unable to ascertain a valid user ID for this callback. Please <a href="/contact-us">contact us</a> quoting this message.'), 'error');
+                }
+            }
+            else if (strcmp ($lines[0], "FAIL") == 0) 
+            {
+                // log for manual investigation
+                watchdog('urpad_property_add', 'Paypal CURL returned a FAIL response<br>: <pre>' . print_r($lines,1) . '</pre>', array(), WATCHDOG_ERROR);
+                drupal_set_message('PayPal communication error, please <a href="/contact-us">contact us</a> quoting your PayPal email address and a description of the issue.', 'error');
+
+                $return .= '<p>There was an issue with your payment. Please contact us.</p>';
+            }
+        }
+        return $return;
+}
+
+
+
+// Implementation of hook_mail
+function urpad_property_add_mail($from = 'hello@urpadonline.com', $to, $subject, $message) 
+{
+        $my_module = 'urpad_property_add';
+        $my_mail_token = microtime();
+        $message = array(
+            'id' => $my_module . '_' . $my_mail_token,
+            'to' => $to,
+            'subject' => $subject,
+            'body' => array($message),
+            'headers' => array(
+                'From' => $from,
+                'Sender' => $from,
+                'Return-Path' => $from,
+            ),
+        );
+        $system = drupal_mail_system($my_module, $my_mail_token);
+        $message = $system->format($message);
+        if ($system->mail($message)) {
+            return TRUE;
+        } else {
+            return FALSE;
+        }
+}
+
+
+// How many properties does a given user already have listed on the site?
+function count_user_properties($uid) 
+{
+     $query = "SELECT COUNT(n.nid) AS amount FROM {node} n WHERE n.uid = " . (int)$uid . " AND n.type IN ('property_for_sale_commercial', 'property_for_sale_private', 'property_to_let_commercial', 'property_to_let_private')";
+     $result = db_query($query)->fetch();
+     return $result->amount;
+}
+
+// Get the most recently added property for a given user id
+function get_most_recent_property($uid)
+{
+     $query = "SELECT node.nid AS nid, node.nid AS nid, node.created AS node_created FROM {node} node " . 
+                "WHERE node.uid = " . (int)$uid . " AND node.type IN ('property_for_sale_commercial', 'property_for_sale_private', 'property_to_let_commercial', 'property_to_let_private')" . 
+                "ORDER BY node_created DESC LIMIT 1 OFFSET 0";
+     $result = db_query($query)->fetch();
+     
+     $return = array();
+
+     if(is_object($result)) 
+     {
+        if($result->nid > '') $return = node_load($result->nid);
+     }
+
+    return $return;
+}
+
+
+function create_paypal_button($node, $tax = true)
+{    
+    $amount = variable_get($node->type . '_price_val', 'N/A');   
+    if($amount == 'N/A') return '<p><strong>Could not generate PayPal button</strong></p>'; 
+    
+    $button = '';
+    $button .=  '<form action="https://www.paypal.com/cgi-bin/webscr" method="post" target="_top">' . 
+                '<input type="hidden" name="cmd" value="_xclick">' . 
+                '<input type="hidden" name="business" value="transactions@urpadonline.com">' . 
+                '<input type="hidden" name="lc" value="US">' . 
+                '<input type="hidden" name="item_name" value="Urpad - Property Listing: ' . $node->title . '">' . 
+                '<input type="hidden" name="amount" value="' . $amount . '">' . 
+                '<input type="hidden" name="currency_code" value="GBP">' . 
+                '<input type="hidden" name="button_subtype" value="services">' . 
+                '<input type="hidden" name="no_note" value="0">' . 
+                '<input type="hidden" name="tax_rate" value="20">' . 
+                '<input type="hidden" name="shipping" value="0.00">' . 
+                '<input type="hidden" name="bn" value="PP-BuyNowBF:btn_buynowCC_LG.gif:NonHostedGuest">';
+               
+    if($tax == false) $button .= '<input type="hidden" name="tax" value="0">';            
+                  
+    $button .=  '<input type="image" src="https://www.paypalobjects.com/en_US/i/btn/btn_buynowCC_LG.gif" border="0" name="submit" alt="PayPal - The safer, easier way to pay online!">' . 
+                '<img alt="" border="0" src="https://www.paypalobjects.com/en_US/i/scr/pixel.gif" width="1" height="1">' . 
+                '</form>';
+    
+    return $button;
+    
+}
+
+
+// --------
+
+
+
+
+
+// -----
+// Adding property nodes & users: 
+// - Create user if node author is currently anonymous based on email IF one doesn't already exist
+// - IF user already exists, associate the node just created with the user matching entered email
+// I looked into rules for this as it would have been nice to do this in the admin area, but 
+// crucially the current version is missing the 'Entity Exists By Property' condition which would 
+// check if a user already exists - see: 
+// http://drupal.stackexchange.com/questions/19843/create-user-on-content-creation
+
+/**
+ * Implementation of hook_node_presave()
+ */
+// hook_node_presave() fires even when there is a validation error on the form. This creates SQL errors
+// when the form is amended and submitted again.  
+//function urpad_property_add_node_presave($node)
+function urpad_property_add_node_insert($node)
+{
+    // Leave this at FALSE
+    $debug = FALSE;
+    
+    if($node->type == 'property_for_sale_commercial' ||
+        $node->type == 'property_for_sale_private' || 
+        $node->type == 'property_to_let_commercial' || 
+        $node->type == 'property_to_let_private')
+    {
+
+        if($node->type == 'property_for_sale_commercial' || $node->type == 'property_for_sale_private') $spath = 'property-sale-success/';
+        elseif ($node->type == 'property_to_let_commercial' || $node->type == 'property_to_let_private') $spath = 'property-let-success/';
+
+        //echo 'Initial node: <br>----<pre>' . print_r($node,1) . '</pre><br>---<br>';
+        //die();
+        //watchdog('Initial node:', 'uid: ' . $node->uid . '<br>--<br>' . (int)empty($node->gws_processed) . '<br>---<br><pre>' . print_r($node,1) . '</pre>');
+
+        // TODO: some 'other' fields are not saving - the 'heating type' one *does* work in property_to_let_private
+
+
+        // Format the main description to remove ALL CAPS and ****THIS KIND OF THING*****
+        $maindesc = $node->field_property_description[$node->language][0]['value'];
+        $string = strtolower($maindesc);
+        // Replace multiple asterisks with a single *
+        $string = preg_replace('/\*{2,}/', '*', $string);
+        // Remove all asterisks
+        // $string = preg_replace('/[\*]+/', '', $string);
+        $node->field_property_description[$node->language][0]['value'] = $string;
+
+        if($debug) echo '<br>-------------<br><br><br>Beginning debug<br>---<br>';
+        
+        // anonymous user
+        if($node->uid == 0)
+        {
+            $email = $node->field_email[$node->language][0]['email'];
+
+            // Does a user exist with input email address?
+            $existing_user = false;
+            $account = false;
+            $account = user_load_by_mail($email);        
+
+            if($debug) echo 'EXISTING ACCOUNT:<pre>' . print_r($account,1) . '</pre><br>';    
+
+            if(is_object($account))
+            {
+                if($debug) echo 'User already exists, associate property to account <br>';
+                if($debug) echo 'UID:' . $account->uid . '<br>';
+                if($debug) echo 'NAME:' . $account->name . '<br>';
+
+                // Associate created node to existing user account
+                $node->uid = $account->uid;
+                $node->name = $account->name;
+                //$node->gws_processed = 1;
+                //node_save($node);
+                
+                if($debug) echo 'Added existing user UID & Name to node object<br>';
+                if($debug) echo 'node uid: ' . $node->uid . '<br>';
+                if($debug) echo 'node name: ' . $node->name . '<br>';
+
+                $existing_user = true;
+                
+                //echo 'Associate created node to an existing user account matched on email: ' . $email . '<br>';
+                //echo 'Loaded account: <br><pre>' . print_r($account,1) . '</pre><br>---<br>';
+
+                $message = 'Thanks for adding another property, ' . $node->name . '. ';
+                if (user_is_logged_in()) {
+                    $message .= '<a href="/my-properties">Manage your properties</a>';
+                }
+                drupal_set_message($message);
+            }
+            else
+            {
+                if($debug) echo 'Creating a new user account..<Br>';
+
+                // Usernames must be unique. As we base the username on the field 'Your Name' in the property add 
+                // nodes this may occur if a user uses a different email address but the same name, or two 
+                // different people with the same name. So, check against 
+                $name = $node->field_to_let_priv_your_name[$node->language][0]['value'];
+
+                while (db_query("SELECT COUNT(uid) FROM {users} WHERE name LIKE :name", array(':name' => $name))->fetchField() > 0) 
+                {
+                    // Username already taken
+                    // Create a unique username - we already know the email matches and that is 
+                    // how we associate properties to users, so username is not so important to us.
+                    // Also remember that users are able to log in with their email addresses.
+                    // Append a random integer to the name.
+                    $name .= rand(0, 19);
+                }
+                
+                // Create new user account
+                // TODO / Future: Create own password? - for now use Drupal function
+                $password = user_password(8);
+             
+                $fields = array(
+                    'name' => $name,
+                    'mail' => $email,
+                    'pass' => $password,
+                    'status' => 1,
+                    'init' => $email,
+                    'roles' => array(4 => 'Urpad User'),
+                );
+
+                // The first parameter is left blank so a new user is created
+                $account = user_save('', $fields);
+
+                if($debug) echo 'User account has been saved<br>';
+                if($debug) echo 'NEW ACCOUNT:<pre>' . print_r($account,1) . '</pre><br>';      
+
+                if($debug) echo 'UID:' . $account->uid . '<br>';
+                if($debug) echo 'NAME:' . $account->name . '<br>';
+
+                // Associate the created content with the new user account
+                $node->uid = $account->uid;
+                $node->name = $account->name; 
+                //$node->gws_processed = 1; 
+                //node_save($node);
+
+                if($debug) echo 'Added existing user UID & Name to node object<br>';
+                if($debug) echo 'node uid: ' . $node->uid . '<br>';
+                if($debug) echo 'node name: ' . $node->name . '<br>';                
+                
+                drupal_set_message(t('Thanks - your property has been successfully saved'));
+
+                // If you want to send the welcome email, use the following code
+
+                // Manually set the password so it appears in the e-mail.
+                $account->password = $password;
+
+                // Send the e-mail through the user module.
+                drupal_mail('user', 'register_no_approval_required', $email, NULL, array('account' => $account), variable_get('site_mail', 'hello@urpadonline.com'));
+            }
+
+            
+            //echo 'Pass: ' . $password . '<br><Br>';
+            //echo '<pre>' . print_r($account,1) . '</pre>';
+            
+
+            // If possible, log the user in automatically 
+
+            // For security, we cannot log an existing user in if we *only* have a hashed password - e.g. If the 
+            // customer has already listed a property, and lists another property using the same email address 
+            // while logged OUT. In this case, we still forward to the success page so that payment info is shown,
+            // but we simply display a message about the property being associated with that email / account.
+            // At this stage, there is not really any user advantage to being logged in. My thinking is that for
+            // future expansion, it is best to associate all properties to user accounts so we could expand on the
+            // 'My Properties' area etc etc.                
+            if(!empty($password))
+            {
+                $uid = user_authenticate($name, $password);
+
+                if ($uid !== false) 
+                {
+                  global $user;
+                  $user = user_load($uid);
+                  
+                  $login_array = array ('name' => $user->name);
+
+                  user_login_finalize($login_array);
+                  unset($account);
+                
+                  // The redirect to success page is handled by these RULES:
+                  // 'Unpublish LET property node on creation'
+                  // and
+                  // 'Unpublish SALE property node on creation'
+                }
+                if($debug) echo 'NODE2:<pre>' . print_r($node,1) . '</pre><br>'; 
+                if($debug) die('TEST - Got to here 2<br>');
+            }
+
+            watchdog('urpad_property_add', 'Added a property: ' . $node->title . ' - Note: user has not yet paid at this point', array(), WATCHDOG_NOTICE);
+        }
+        if($debug) echo 'NODE4:<pre>' . print_r($node,1) . '</pre><br>'; 
+        if($debug) die('TEST - Got to here 4<br>');
+        
+    }
+}
+
+
+
+// ------
+
